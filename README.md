@@ -1,51 +1,44 @@
 # Vitalia
 
-Aplicación móvil de Vitalia, desarrollada con Flutter para Android y iOS.
+A calm pill cabinet and alarm clock from Davion Software. Never miss a dose.
 
-> Estado actual: el repositorio contiene la base inicial de Flutter y su pantalla de ejemplo. Las funcionalidades del producto todavía no están implementadas.
+Private rhythm keeper for iOS and Android. No accounts. No backend. Data stays on the device.
 
-## Requisitos
+## What it does
 
-- [Flutter](https://docs.flutter.dev/get-started/install) 3.47.1 o una versión estable compatible
-- Dart 3.13.1 o superior, incluido con Flutter
-- Para Android: Android Studio y Android SDK
-- Para iOS: macOS, Xcode y CocoaPods
+Tell Vitalia what you take, when, and on which days. Today's slots sit in Later until the clock catches them. At dose time a full-screen alarm holds until you Take, Snooze, or Skip. Missed doses stay on Today for two hours past the scheduled time, then remain so you can still Take or Skip.
 
-Comprueba la instalación antes de continuar:
+Alarms work while the app is open. The OS will not wake a killed Vitalia process.
+
+## Tabs
+
+- **Today** — due now, later, and already done, with a taken/total ring and a refill-soon strip
+- **Meds** — the cabinet: add, edit, delete
+- **History** — this week's adherence, clean-day streak, last 7 days, recent log
+- **Settings** — sound, vibration, banners, snooze length, test alarm, restore demo cabinet, clear data
+
+## Requirements
+
+- [Flutter](https://docs.flutter.dev/get-started/install) 3.47.1 (Dart 3.13.1)
+- Android Studio / Android SDK for Android
+- macOS, Xcode, and CocoaPods for iOS
 
 ```bash
 flutter doctor
 ```
 
-## Configuración local
-
-Clona el repositorio e instala las dependencias:
+## Run
 
 ```bash
 git clone git@github.com:davion-software/vitalia.git
 cd vitalia
 flutter pub get
-```
-
-Por ahora el proyecto no requiere variables de entorno. Si se agregan más adelante, documenta cada variable en un archivo `.env.example`; los archivos `.env` locales están excluidos de Git.
-
-## Ejecutar la aplicación
-
-Inicia un emulador o conecta un dispositivo y ejecuta:
-
-```bash
 flutter run
 ```
 
-Puedes listar los dispositivos disponibles con:
+First launch seeds a demo cabinet (Vitamin D3, Omega-3, Lisinopril, Magnesium). Restore it anytime from Settings.
 
-```bash
-flutter devices
-```
-
-## Verificaciones
-
-Antes de abrir un pull request, formatea y valida los cambios:
+## Checks
 
 ```bash
 dart format --output=none --set-exit-if-changed .
@@ -53,23 +46,14 @@ flutter analyze
 flutter test
 ```
 
-## Estructura
+## Layout
 
 ```text
-android/             Proyecto nativo de Android
-ios/                 Proyecto nativo de iOS
-lib/main.dart        Punto de entrada de la aplicación
-test/                Pruebas automatizadas
-pubspec.yaml         Dependencias y configuración de Flutter
+lib/main.dart          Entry
+lib/data/              Local store, schedule, persistence
+lib/screens/           Today, Meds, History, Settings, editor
+lib/widgets/           Pill glyphs, dose tiles, alarm overlay
+android/ ios/          Native hosts
 ```
 
-## Flujo de trabajo recomendado
-
-1. Crea una rama desde `main`.
-2. Implementa y valida el cambio localmente.
-3. Usa commits breves que describan una sola intención.
-4. Abre un pull request hacia `main`.
-
-## Acceso
-
-Proyecto de uso interno de Davion Software. No distribuyas el código ni sus credenciales sin autorización.
+Internal Davion Software project. Do not distribute the code without authorization.
