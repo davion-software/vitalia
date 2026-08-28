@@ -98,8 +98,8 @@ class Medication {
         notes: 'Test alarm',
         shape: PillShape.capsule,
         color: PillColor.sage,
-        timesMinutes: [480],
-        daysOfWeek: [],
+        timesMinutes: const [480],
+        daysOfWeek: const [],
       );
 }
 
