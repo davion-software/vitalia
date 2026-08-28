@@ -49,11 +49,18 @@ flutter test
 ## Layout
 
 ```text
-lib/main.dart          Entry
-lib/data/              Local store, schedule, persistence
-lib/screens/           Today, Meds, History, Settings, editor
-lib/widgets/           Pill glyphs, dose tiles, alarm overlay
-android/ ios/          Native hosts
+lib/main.dart                 Entry
+lib/app/                      App shell, scope, composition root
+lib/core/                     Theme, shared widgets, formatters
+lib/domain/entities/          Medication, dose, snapshot, settings
+lib/domain/schedule.dart      Pure slot and adherence rules
+lib/data/                     Local store, persistence, demo cabinet
+lib/features/today/           Today tab and dose tiles
+lib/features/medications/     Cabinet and editor
+lib/features/history/         Adherence and log
+lib/features/settings/        Preferences
+lib/features/alarm/           Full-screen dose alarm
+android/ ios/                 Native hosts
 ```
 
 Internal Davion Software project. Do not distribute the code without authorization.

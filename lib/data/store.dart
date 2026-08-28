@@ -2,10 +2,11 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 
-import '../models/models.dart';
+import 'package:vitalia/domain/entities.dart';
+import 'package:vitalia/domain/schedule.dart';
+
 import 'demo_cabinet.dart';
 import 'repository.dart';
-import 'schedule.dart';
 
 class VitaliaStore extends ChangeNotifier {
   VitaliaStore({required this._repository, DateTime Function()? clock})
@@ -44,7 +45,7 @@ class VitaliaStore extends ChangeNotifier {
   DoseSlot? get ringingSlot {
     if (_testAlarm) {
       final med = _snapshot.medications.isEmpty
-          ? sampleMedication()
+          ? Medication.sample()
           : _snapshot.medications.first;
       return DoseSlot(
         medication: med,
