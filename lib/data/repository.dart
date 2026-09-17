@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../models/models.dart';
+import 'package:vitalia/domain/entities.dart';
 
 abstract class VitaliaRepository {
   Future<Snapshot?> load();

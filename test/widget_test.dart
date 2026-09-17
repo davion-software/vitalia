@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:vitalia/app.dart';
+import 'package:vitalia/app/app.dart';
 import 'package:vitalia/data/repository.dart';
 import 'package:vitalia/data/store.dart';
 

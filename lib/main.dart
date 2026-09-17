@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'app.dart';
+import 'app/app.dart';
+import 'core/theme/palette.dart';
 import 'data/repository.dart';
 import 'data/store.dart';
-import 'theme/palette.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
