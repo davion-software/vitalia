@@ -33,33 +33,38 @@ flutter doctor
 git clone git@github.com:davion-software/vitalia.git
 cd vitalia
 flutter pub get
+dart run build_runner build
 flutter run
 ```
 
-First launch seeds a demo cabinet (Vitamin D3, Omega-3, Lisinopril, Magnesium). Restore it anytime from Settings.
+First launch seeds a demo cabinet (Vitamin D3, Omega-3, Lisinopril,
+Magnesium). Existing `SharedPreferences` snapshots are migrated once to the
+Drift database and removed only after a successful transaction.
 
 ## Checks
 
 ```bash
-dart format --output=none --set-exit-if-changed .
-flutter analyze
-flutter test
+dart run build_runner build
+dart format --output=none --set-exit-if-changed lib test
+flutter analyze --fatal-infos --fatal-warnings
+flutter test --test-randomize-ordering-seed random
+flutter build apk --release
 ```
 
 ## Layout
 
 ```text
-lib/main.dart                 Entry
-lib/app/                      App shell, scope, composition root
-lib/core/                     Theme, shared widgets, formatters
-lib/domain/entities/          Medication, dose, snapshot, settings
-lib/domain/schedule.dart      Pure slot and adherence rules
-lib/data/                     Local store, persistence, demo cabinet
-lib/features/today/           Today tab and dose tiles
-lib/features/medications/     Cabinet and editor
-lib/features/history/         Adherence and log
-lib/features/settings/        Preferences
-lib/features/alarm/           Full-screen dose alarm
+lib/main.dart                 Thin entrypoint
+lib/bootstrap.dart            Composition root and provider overrides
+lib/app.dart                  MaterialApp.router and lifecycle handling
+lib/core/                     Pure values, typed results, scheduling rules
+lib/data/                     Drift schema, repository, migration boundary
+lib/services/                 Injectable clock and ID providers
+lib/routing/                  Single GoRouter and typed route locations
+lib/theme/                    Theme tokens and reusable visual components
+lib/features/*/presentation/  Consumer views and Riverpod Notifiers
+test/                         Tests mirroring the production structure
+.cursor/skills/               Project-local engineering skills
 android/ ios/                 Native hosts
 ```
 
