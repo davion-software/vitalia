@@ -1,4 +1,4 @@
-import 'package:vitalia/domain/entities.dart';
+import 'package:vitalia/core/medication.dart';
 
 List<Medication> demoCabinet() {
   return const [
