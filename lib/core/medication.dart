@@ -1,8 +1,35 @@
 import 'package:meta/meta.dart';
 
-enum PillShape { capsule, tablet, softgel }
+enum PillShape {
+  capsule,
+  tablet,
+  softgel;
 
-enum PillColor { sage, moss, terracotta, clay, sand, slate, ink, blush }
+  static PillShape? byName(String name) {
+    for (final value in values) {
+      if (value.name == name) return value;
+    }
+    return null;
+  }
+}
+
+enum PillColor {
+  sage,
+  moss,
+  terracotta,
+  clay,
+  sand,
+  slate,
+  ink,
+  blush;
+
+  static PillColor? byName(String name) {
+    for (final value in values) {
+      if (value.name == name) return value;
+    }
+    return null;
+  }
+}
 
 @immutable
 final class Medication {

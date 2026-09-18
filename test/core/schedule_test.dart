@@ -161,4 +161,33 @@ void main() {
       DateTime(2026, 8, 27),
     );
   });
+
+  test('indexEventsBySlot groups matching minutes together', () {
+    final scheduled = DateTime(2026, 8, 26, 8);
+    final events = [
+      DoseEvent(
+        id: 'snooze',
+        medicationId: vitaminD3Id,
+        medicationName: 'Vitamin D3',
+        scheduledAt: scheduled,
+        at: DateTime(2026, 8, 26, 8, 1),
+        action: DoseAction.snoozed,
+        snoozeUntil: DateTime(2026, 8, 26, 8, 10),
+      ),
+      DoseEvent(
+        id: 'taken',
+        medicationId: vitaminD3Id,
+        medicationName: 'Vitamin D3',
+        scheduledAt: scheduled,
+        at: DateTime(2026, 8, 26, 8, 2),
+        action: DoseAction.taken,
+      ),
+    ];
+    final index = indexEventsBySlot(events);
+    expect(index, hasLength(1));
+    expect(
+      eventsForSlot(index, vitaminD3Id, scheduled).map((event) => event.id),
+      ['snooze', 'taken'],
+    );
+  });
 }

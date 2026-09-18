@@ -5,6 +5,7 @@ import 'package:vitalia/core/dose_slot.dart';
 import 'package:vitalia/core/medication.dart';
 
 const missAfter = Duration(hours: 2);
+const doseEventLookback = Duration(days: 400);
 
 DateTime dateOnly(DateTime day) => DateTime(day.year, day.month, day.day);
 
@@ -26,20 +27,31 @@ DateTime combine(DateTime day, int minutes) {
   return DateTime(d.year, d.month, d.day, minutes ~/ 60, minutes % 60);
 }
 
+Map<String, List<DoseEvent>> indexEventsBySlot(List<DoseEvent> events) {
+  final index = <String, List<DoseEvent>>{};
+  for (final event in events) {
+    final key = doseSlotKey(
+      medicationId: event.medicationId,
+      scheduledAt: event.scheduledAt,
+    );
+    (index[key] ??= []).add(event);
+  }
+  for (final slotEvents in index.values) {
+    slotEvents.sort((a, b) => a.at.compareTo(b.at));
+  }
+  return index;
+}
+
 List<DoseEvent> eventsForSlot(
-  List<DoseEvent> events,
+  Map<String, List<DoseEvent>> eventsBySlot,
   String medicationId,
   DateTime scheduledAt,
 ) {
-  final matches = events
-      .where(
-        (event) =>
-            event.medicationId == medicationId &&
-            sameMinute(event.scheduledAt, scheduledAt),
-      )
-      .toList();
-  matches.sort((a, b) => a.at.compareTo(b.at));
-  return matches;
+  return eventsBySlot[doseSlotKey(
+        medicationId: medicationId,
+        scheduledAt: scheduledAt,
+      )] ??
+      const [];
 }
 
 SlotStatus statusFor({
@@ -75,13 +87,32 @@ List<DoseSlot> slotsForDay({
   required List<DoseEvent> events,
   required DateTime day,
   required DateTime now,
+  Map<String, List<DoseEvent>>? eventsBySlot,
+}) {
+  return _slotsForDay(
+    medications: medications,
+    eventsBySlot: eventsBySlot ?? indexEventsBySlot(events),
+    day: day,
+    now: now,
+  );
+}
+
+List<DoseSlot> _slotsForDay({
+  required List<Medication> medications,
+  required Map<String, List<DoseEvent>> eventsBySlot,
+  required DateTime day,
+  required DateTime now,
 }) {
   final slots = <DoseSlot>[];
   for (final medication in medications) {
     if (!runsOn(medication, day)) continue;
     for (final minutes in medication.timesMinutes) {
       final scheduledAt = combine(day, minutes);
-      final slotEvents = eventsForSlot(events, medication.id, scheduledAt);
+      final slotEvents = eventsForSlot(
+        eventsBySlot,
+        medication.id,
+        scheduledAt,
+      );
       final snoozes = slotEvents.where(
         (event) => event.action == DoseAction.snoozed,
       );
@@ -113,6 +144,7 @@ DateTime nextAlarmChange({
   required DateTime now,
 }) {
   var next = DateTime(now.year, now.month, now.day + 1);
+  final eventsBySlot = indexEventsBySlot(events);
 
   void consider(DateTime candidate) {
     if (candidate.isAfter(now) && candidate.isBefore(next)) {
@@ -126,7 +158,11 @@ DateTime nextAlarmChange({
       if (!runsOn(medication, day)) continue;
       for (final minutes in medication.timesMinutes) {
         final scheduledAt = combine(day, minutes);
-        final slotEvents = eventsForSlot(events, medication.id, scheduledAt);
+        final slotEvents = eventsForSlot(
+          eventsBySlot,
+          medication.id,
+          scheduledAt,
+        );
         final resolved = slotEvents.any(
           (event) =>
               event.action == DoseAction.taken ||
@@ -157,10 +193,11 @@ Adherence adherenceForRange({
   var missed = 0;
   var day = dateOnly(from);
   final last = dateOnly(to);
+  final eventsBySlot = indexEventsBySlot(events);
   while (!day.isAfter(last)) {
-    for (final slot in slotsForDay(
+    for (final slot in _slotsForDay(
       medications: medications,
-      events: events,
+      eventsBySlot: eventsBySlot,
       day: day,
       now: now,
     )) {
@@ -194,10 +231,11 @@ int cleanStreak({
 }) {
   var streak = 0;
   var day = dateOnly(now);
+  final eventsBySlot = indexEventsBySlot(events);
   for (var i = 0; i < 365; i++) {
-    final slots = slotsForDay(
+    final slots = _slotsForDay(
       medications: medications,
-      events: events,
+      eventsBySlot: eventsBySlot,
       day: day,
       now: now,
     );
@@ -254,11 +292,12 @@ List<DaySummary> lastSevenDays({
   required DateTime now,
 }) {
   final today = dateOnly(now);
+  final eventsBySlot = indexEventsBySlot(events);
   return List.generate(7, (index) {
     final day = today.subtract(Duration(days: 6 - index));
-    final slots = slotsForDay(
+    final slots = _slotsForDay(
       medications: medications,
-      events: events,
+      eventsBySlot: eventsBySlot,
       day: day,
       now: now,
     );

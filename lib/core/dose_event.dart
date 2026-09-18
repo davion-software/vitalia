@@ -1,6 +1,17 @@
 import 'package:meta/meta.dart';
 
-enum DoseAction { taken, skipped, snoozed }
+enum DoseAction {
+  taken,
+  skipped,
+  snoozed;
+
+  static DoseAction? byName(String name) {
+    for (final value in values) {
+      if (value.name == name) return value;
+    }
+    return null;
+  }
+}
 
 @immutable
 final class DoseEvent {

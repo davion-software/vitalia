@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'dart:developer' as developer;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:vitalia/core/app_log.dart';
 import 'package:vitalia/core/result.dart';
 import 'package:vitalia/data/providers.dart';
 import 'package:vitalia/features/alarm/presentation/alarm_overlay.dart';
@@ -56,7 +56,11 @@ final class _VitaliaAppState extends ConsumerState<VitaliaApp>
         ref.invalidate(alarmNotifierProvider);
       case AppLifecycleState.inactive:
       case AppLifecycleState.paused:
-        unawaited(_flush().catchError(_reportUnexpected));
+        unawaited(
+          _flush().catchError(
+            unexpectedLogger('vitalia.lifecycle', 'lifecycle.flush'),
+          ),
+        );
       case AppLifecycleState.detached:
       case AppLifecycleState.hidden:
         break;
@@ -69,16 +73,7 @@ final class _VitaliaAppState extends ConsumerState<VitaliaApp>
       case Ok():
         return;
       case Err(:final failure):
-        developer.log(failure.code, name: 'vitalia.lifecycle');
+        logFailure('vitalia.lifecycle', failure);
     }
-  }
-
-  void _reportUnexpected(Object error, StackTrace stack) {
-    developer.log(
-      'lifecycle.flush',
-      name: 'vitalia.lifecycle',
-      error: error,
-      stackTrace: stack,
-    );
   }
 }
