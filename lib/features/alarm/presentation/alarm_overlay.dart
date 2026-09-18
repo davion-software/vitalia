@@ -1,9 +1,10 @@
 import 'dart:async';
-import 'dart:developer' as developer;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:vitalia/core/app_log.dart';
+import 'package:vitalia/core/copy.dart';
 import 'package:vitalia/features/alarm/presentation/alarm_notifier.dart';
 import 'package:vitalia/theme/palette.dart';
 import 'package:vitalia/theme/widgets/pill_glyph.dart';
@@ -18,6 +19,7 @@ final class AlarmOverlay extends ConsumerStatefulWidget {
 final class _AlarmOverlayState extends ConsumerState<AlarmOverlay> {
   Timer? _pulse;
   String? _activeAlarmId;
+  // Subscribed once in initState and closed in dispose.
   late final ProviderSubscription<AsyncValue<AlarmState?>> _alarmSubscription;
 
   @override
@@ -58,11 +60,16 @@ final class _AlarmOverlayState extends ConsumerState<AlarmOverlay> {
     }
     if (alarm.settings.sound) {
       unawaited(
-        SystemSound.play(SystemSoundType.alert).catchError(_reportUnexpected),
+        SystemSound.play(SystemSoundType.alert)
+            .catchError(unexpectedLogger('vitalia.alarm', 'alarm.feedback')),
       );
     }
     if (alarm.settings.vibration) {
-      unawaited(HapticFeedback.heavyImpact().catchError(_reportUnexpected));
+      unawaited(
+        HapticFeedback.heavyImpact().catchError(
+          unexpectedLogger('vitalia.alarm', 'alarm.feedback'),
+        ),
+      );
     }
     _pulse = Timer(const Duration(seconds: 2), () => _pingAndSchedule(alarmId));
   }
@@ -81,6 +88,7 @@ final class _AlarmOverlayState extends ConsumerState<AlarmOverlay> {
     final med = slot.medication;
     final snooze = alarm.settings.snoozeMinutes;
     final notifier = ref.read(alarmNotifierProvider.notifier);
+    final actionFailure = alarm.actionFailure;
     return Material(
       color: VitaliaPalette.sage,
       child: SafeArea(
@@ -184,19 +192,21 @@ final class _AlarmOverlayState extends ConsumerState<AlarmOverlay> {
                 ),
                 child: const Text('Skip'),
               ),
+              if (actionFailure != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  storageFailureMessage(actionFailure),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontFamily: 'Outfit',
+                    color: VitaliaPalette.paper,
+                  ),
+                ),
+              ],
             ],
           ),
         ),
       ),
-    );
-  }
-
-  void _reportUnexpected(Object error, StackTrace stack) {
-    developer.log(
-      'alarm.feedback',
-      name: 'vitalia.alarm',
-      error: error,
-      stackTrace: stack,
     );
   }
 }

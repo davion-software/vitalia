@@ -5,6 +5,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vitalia/core/app_settings.dart';
 import 'package:vitalia/core/dose_slot.dart';
 import 'package:vitalia/core/result.dart';
 import 'package:vitalia/core/storage_failure.dart';
@@ -53,6 +54,40 @@ void main() {
 
     final updated = await updatedFuture;
     expect(updated.takenCount, 1);
+  });
+
+  test('settings writes complete while Today is subscribed', () async {
+    SharedPreferences.setMockInitialValues({});
+    final now = DateTime(2026, 8, 26, 8, 5);
+    final database = AppDatabase(NativeDatabase.memory());
+    addTearDown(database.close);
+    final repository = VitaliaRepository(database);
+    expect(await repository.initialize(), isA<Ok<void, StorageFailure>>());
+    final container = ProviderContainer(
+      overrides: [
+        appDatabaseProvider.overrideWithValue(database),
+        vitaliaRepositoryProvider.overrideWithValue(repository),
+        clockProvider.overrideWithValue(Clock.fixed(now)),
+        idGeneratorProvider.overrideWithValue(() => 'notifier-event'),
+        currentMinuteProvider.overrideWithValue(AsyncData(now)),
+      ],
+    );
+    addTearDown(container.dispose);
+    await _waitForToday(container, (state) => state.due.isNotEmpty);
+
+    expect(
+      await repository.updateSettings(
+        AppSettings.defaults.copyWith(sound: false),
+      ),
+      isA<Ok<void, StorageFailure>>(),
+    );
+    final snapshot = await repository.readSnapshot();
+    switch (snapshot) {
+      case Ok(:final value):
+        expect(value.settings.sound, isFalse);
+      case Err(:final failure):
+        fail('Unexpected storage failure: ${failure.code}');
+    }
   });
 
   test('clock changes update Today without returning to loading', () async {

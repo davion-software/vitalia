@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vitalia/core/app_settings.dart';
 import 'package:vitalia/core/dose_event.dart';
 import 'package:vitalia/core/medication.dart';
 import 'package:vitalia/core/result.dart';
@@ -24,7 +25,7 @@ void main() {
     final repository = VitaliaRepository(database);
 
     expect(await repository.initialize(), isA<Ok<void, StorageFailure>>());
-    final result = await repository.watchSnapshot().first;
+    final result = await repository.readSnapshot();
 
     switch (result) {
       case Ok(:final value):
@@ -47,7 +48,7 @@ void main() {
       addTearDown(database.close);
       final repository = VitaliaRepository(database);
       expect(await repository.initialize(), isA<Ok<void, StorageFailure>>());
-      final initial = await repository.watchSnapshot().first;
+      final initial = await repository.readSnapshot();
       final snapshot = switch (initial) {
         Ok(:final value) => value,
         Err(:final failure) => throw TestFailure(failure.code),
@@ -68,7 +69,7 @@ void main() {
       );
 
       expect(result, isA<Ok<void, StorageFailure>>());
-      final updated = await repository.watchSnapshot().first;
+      final updated = await repository.readSnapshot();
       switch (updated) {
         case Ok(:final value):
           expect(value.events.single.action, DoseAction.taken);
@@ -97,7 +98,7 @@ void main() {
       );
 
       expect(await repository.initialize(), isA<Ok<void, StorageFailure>>());
-      final migrated = await repository.watchSnapshot().first;
+      final migrated = await repository.readSnapshot();
       switch (migrated) {
         case Ok(:final value):
           expect(value.medications.single.name, 'Migrated medicine');
@@ -125,6 +126,76 @@ void main() {
       ),
       throwsA(isA<SqliteException>()),
     );
+  });
+
+  test('updateSettings persists the singleton settings row', () async {
+    SharedPreferences.setMockInitialValues({});
+    final database = AppDatabase(NativeDatabase.memory());
+    addTearDown(database.close);
+    final repository = VitaliaRepository(database);
+    expect(await repository.initialize(), isA<Ok<void, StorageFailure>>());
+
+    expect(
+      await repository.updateSettings(
+        AppSettings.defaults.copyWith(sound: false),
+      ),
+      isA<Ok<void, StorageFailure>>(),
+    );
+    switch (await repository.readSnapshot()) {
+      case Ok(:final value):
+        expect(value.settings.sound, isFalse);
+      case Err(:final failure):
+        fail('Unexpected storage failure: ${failure.code}');
+    }
+  });
+
+  test('dose event watch ignores events older than the window', () async {
+    SharedPreferences.setMockInitialValues({});
+    final database = AppDatabase(NativeDatabase.memory());
+    addTearDown(database.close);
+    final repository = VitaliaRepository(database);
+    expect(await repository.initialize(), isA<Ok<void, StorageFailure>>());
+    final snapshot = switch (await repository.readSnapshot()) {
+      Ok(:final value) => value,
+      Err(:final failure) => throw TestFailure(failure.code),
+    };
+    final medication = snapshot.medications.first;
+    expect(
+      await repository.recordDose(
+        DoseEvent(
+          id: 'old-event',
+          medicationId: medication.id,
+          medicationName: medication.name,
+          scheduledAt: DateTime(2024, 1, 1, 8),
+          at: DateTime(2024, 1, 1, 8, 5),
+          action: DoseAction.taken,
+        ),
+        decrementQuantity: false,
+      ),
+      isA<Ok<void, StorageFailure>>(),
+    );
+    expect(
+      await repository.recordDose(
+        DoseEvent(
+          id: 'recent-event',
+          medicationId: medication.id,
+          medicationName: medication.name,
+          scheduledAt: DateTime(2026, 8, 26, 8),
+          at: DateTime(2026, 8, 26, 8, 5),
+          action: DoseAction.skipped,
+        ),
+        decrementQuantity: false,
+      ),
+      isA<Ok<void, StorageFailure>>(),
+    );
+
+    final result = await repository.watchDoseEventsSince(DateTime(2026)).first;
+    switch (result) {
+      case Ok(:final value):
+        expect(value.map((event) => event.id), ['recent-event']);
+      case Err(:final failure):
+        fail('Unexpected storage failure: ${failure.code}');
+    }
   });
 }
 

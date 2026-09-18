@@ -1,13 +1,14 @@
 import 'dart:convert';
-import 'dart:developer' as developer;
 
 import 'package:drift/drift.dart';
 import 'package:flutter/services.dart';
 import 'package:meta/meta.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqlite3/sqlite3.dart';
+import 'package:vitalia/core/app_log.dart';
 import 'package:vitalia/core/app_settings.dart';
 import 'package:vitalia/core/dose_event.dart';
+import 'package:vitalia/core/dose_slot.dart';
 import 'package:vitalia/core/medication.dart';
 import 'package:vitalia/core/result.dart';
 import 'package:vitalia/core/snapshot.dart';
@@ -15,6 +16,7 @@ import 'package:vitalia/core/storage_failure.dart';
 import 'package:vitalia/data/app_database.dart';
 import 'package:vitalia/data/demo_cabinet.dart';
 import 'package:vitalia/data/legacy_snapshot_codec.dart';
+import 'package:vitalia/data/row_mapping.dart';
 
 final class VitaliaRepository {
   VitaliaRepository(this._database, {SharedPreferences? legacyPreferences}) {
@@ -27,27 +29,71 @@ final class VitaliaRepository {
   final AppDatabase _database;
   SharedPreferences? _legacyPreferences;
 
-  Stream<Result<Snapshot, StorageFailure>> watchSnapshot() async* {
+  Stream<Result<List<Medication>, StorageFailure>> watchMedications() {
+    return _watch(
+      readsFrom: {
+        _database.medications,
+        _database.medicationTimes,
+        _database.medicationDays,
+      },
+      load: _loadMedications,
+      triggerSql: 'SELECT 1 AS medications_watch',
+      sqliteOp: 'medications.watch.sqlite',
+      formatOp: 'medications.watch.format',
+    );
+  }
+
+  Stream<Result<List<DoseEvent>, StorageFailure>> watchDoseEventsSince(
+    DateTime from,
+  ) async* {
+    final fromUtcMs = utcMs(DateTime(from.year, from.month, from.day));
     try {
-      final trigger = _database.customSelect(
-        'SELECT 1',
-        readsFrom: {
-          _database.medications,
-          _database.medicationTimes,
-          _database.medicationDays,
-          _database.doseEvents,
-          _database.settings,
-        },
-      );
-      await for (final _ in trigger.watch()) {
-        yield Ok(await _loadSnapshot());
+      final query = _database.select(_database.doseEvents)
+        ..where(
+          (row) =>
+              row.scheduledAtUtcMs.isBiggerOrEqualValue(fromUtcMs) |
+              row.occurredAtUtcMs.isBiggerOrEqualValue(fromUtcMs),
+        )
+        ..orderBy([(row) => OrderingTerm.desc(row.occurredAtUtcMs)]);
+      await for (final rows in query.watch()) {
+        yield Ok([for (final row in rows) doseEventFromRow(row)]);
       }
     } on SqliteException catch (error, stack) {
-      _log('snapshot.watch.sqlite', error, stack);
+      logUnexpected('vitalia.storage', 'events.watch.sqlite', error, stack);
       yield const Err(StorageUnavailable());
     } on FormatException catch (error, stack) {
-      _log('snapshot.watch.format', error, stack);
+      logUnexpected('vitalia.storage', 'events.watch.format', error, stack);
       yield const Err(StorageCorrupt());
+    }
+  }
+
+  Stream<Result<AppSettings, StorageFailure>> watchSettings() {
+    return _watch(
+      readsFrom: {_database.settings},
+      load: _loadSettings,
+      triggerSql: 'SELECT 1 AS settings_watch',
+      sqliteOp: 'settings.watch.sqlite',
+      formatOp: 'settings.watch.format',
+    );
+  }
+
+  @useResult
+  Future<Result<Snapshot, StorageFailure>> readSnapshot() async {
+    try {
+      return Ok(
+        Snapshot(
+          initialized: true,
+          medications: await _loadMedications(),
+          events: await _loadEvents(),
+          settings: await _loadSettings(),
+        ),
+      );
+    } on SqliteException catch (error, stack) {
+      logUnexpected('vitalia.storage', 'snapshot.read.sqlite', error, stack);
+      return const Err(StorageUnavailable());
+    } on FormatException catch (error, stack) {
+      logUnexpected('vitalia.storage', 'snapshot.read.format', error, stack);
+      return const Err(StorageCorrupt());
     }
   }
 
@@ -113,19 +159,36 @@ final class VitaliaRepository {
   ) {
     return _write('medication.delete', () {
       return _database.transaction(() async {
-        final changed =
-            await (_database.update(
-              _database.medications,
-            )..where((row) => row.id.equals(id))).write(
-              MedicationsCompanion(
-                isDeleted: const Value(true),
-                deletedAtUtcMs: Value(_utcMs(now)),
-                updatedAtUtcMs: Value(_utcMs(now)),
-              ),
-            );
-        if (changed == 0) return;
+        await (_database.update(
+          _database.medications,
+        )..where((row) => row.id.equals(id))).write(
+          MedicationsCompanion(
+            isDeleted: const Value(true),
+            deletedAtUtcMs: Value(utcMs(now)),
+            updatedAtUtcMs: Value(utcMs(now)),
+          ),
+        );
       });
     });
+  }
+
+  @useResult
+  Future<Result<void, StorageFailure>> recordSlot({
+    required DoseSlot slot,
+    required DoseAction action,
+    required DateTime now,
+    required String eventId,
+    int snoozeMinutes = 0,
+  }) {
+    return recordDose(
+      slot.toEvent(
+        id: eventId,
+        at: now,
+        action: action,
+        snoozeMinutes: snoozeMinutes,
+      ),
+      decrementQuantity: action == DoseAction.taken,
+    );
   }
 
   @useResult
@@ -139,26 +202,12 @@ final class VitaliaRepository {
             await (_database.select(_database.doseEvents)..where(
                   (row) =>
                       row.medicationId.equals(event.medicationId) &
-                      row.scheduledAtUtcMs.equals(_utcMs(event.scheduledAt)) &
+                      row.scheduledAtUtcMs.equals(utcMs(event.scheduledAt)) &
                       row.action.isIn(const ['taken', 'skipped']),
                 ))
                 .getSingleOrNull();
         if (resolved != null) return;
-        await _database
-            .into(_database.doseEvents)
-            .insert(
-              DoseEventsCompanion.insert(
-                id: event.id,
-                medicationId: event.medicationId,
-                medicationName: event.medicationName,
-                scheduledAtUtcMs: _utcMs(event.scheduledAt),
-                occurredAtUtcMs: _utcMs(event.at),
-                action: event.action.name,
-                snoozeUntilUtcMs: Value(
-                  event.snoozeUntil?.toUtc().millisecondsSinceEpoch,
-                ),
-              ),
-            );
+        await _insertEvent(event);
         if (!decrementQuantity) return;
         final medication = await (_database.select(
           _database.medications,
@@ -170,7 +219,7 @@ final class VitaliaRepository {
         )..where((row) => row.id.equals(event.medicationId))).write(
           MedicationsCompanion(
             quantity: Value(quantity > 0 ? quantity - 1 : 0),
-            updatedAtUtcMs: Value(_utcMs(event.at)),
+            updatedAtUtcMs: Value(utcMs(event.at)),
           ),
         );
       });
@@ -181,16 +230,7 @@ final class VitaliaRepository {
   Future<Result<void, StorageFailure>> updateSettings(AppSettings settings) {
     return _write('settings.update', () {
       return _database.transaction(() async {
-        await _database
-            .into(_database.settings)
-            .insertOnConflictUpdate(
-              SettingsCompanion.insert(
-                sound: settings.sound,
-                vibration: settings.vibration,
-                banners: settings.banners,
-                snoozeMinutes: settings.snoozeMinutes,
-              ),
-            );
+        await _writeSettings(settings);
       });
     });
   }
@@ -199,16 +239,7 @@ final class VitaliaRepository {
   Future<Result<void, StorageFailure>> restoreDemo(DateTime now) {
     return _write('cabinet.restore_demo', () {
       return _database.transaction(() async {
-        await _database.delete(_database.doseEvents).go();
-        await _database
-            .update(_database.medications)
-            .write(
-              MedicationsCompanion(
-                isDeleted: const Value(true),
-                deletedAtUtcMs: Value(_utcMs(now)),
-                updatedAtUtcMs: Value(_utcMs(now)),
-              ),
-            );
+        await _retireCabinet(now);
         for (final medication in demoCabinet()) {
           await _writeMedication(medication, now);
         }
@@ -220,26 +251,8 @@ final class VitaliaRepository {
   Future<Result<void, StorageFailure>> clearAll(DateTime now) {
     return _write('cabinet.clear', () {
       return _database.transaction(() async {
-        await _database.delete(_database.doseEvents).go();
-        await _database
-            .update(_database.medications)
-            .write(
-              MedicationsCompanion(
-                isDeleted: const Value(true),
-                deletedAtUtcMs: Value(_utcMs(now)),
-                updatedAtUtcMs: Value(_utcMs(now)),
-              ),
-            );
-        await _database
-            .into(_database.settings)
-            .insertOnConflictUpdate(
-              SettingsCompanion.insert(
-                sound: true,
-                vibration: true,
-                banners: true,
-                snoozeMinutes: 10,
-              ),
-            );
+        await _retireCabinet(now);
+        await _writeSettings(AppSettings.defaults);
       });
     });
   }
@@ -251,61 +264,75 @@ final class VitaliaRepository {
     });
   }
 
-  Future<Snapshot> _loadSnapshot() async {
+  Stream<Result<T, StorageFailure>> _watch<T>({
+    required Set<ResultSetImplementation<dynamic, dynamic>> readsFrom,
+    required Future<T> Function() load,
+    required String triggerSql,
+    required String sqliteOp,
+    required String formatOp,
+  }) async* {
+    try {
+      final trigger = _database.customSelect(triggerSql, readsFrom: readsFrom);
+      await for (final _ in trigger.watch()) {
+        yield Ok(await load());
+      }
+    } on SqliteException catch (error, stack) {
+      logUnexpected('vitalia.storage', sqliteOp, error, stack);
+      yield const Err(StorageUnavailable());
+    } on FormatException catch (error, stack) {
+      logUnexpected('vitalia.storage', formatOp, error, stack);
+      yield const Err(StorageCorrupt());
+    }
+  }
+
+  Future<List<Medication>> _loadMedications() async {
     final medicationRows = await (_database.select(
       _database.medications,
     )..where((row) => row.isDeleted.equals(false))).get();
     final timeRows = await _database.select(_database.medicationTimes).get();
     final dayRows = await _database.select(_database.medicationDays).get();
+    final timesByMedication = <String, List<int>>{};
+    for (final row in timeRows) {
+      (timesByMedication[row.medicationId] ??= []).add(row.minutes);
+    }
+    final daysByMedication = <String, List<int>>{};
+    for (final row in dayRows) {
+      (daysByMedication[row.medicationId] ??= []).add(row.weekday);
+    }
+    return [
+      for (final row in medicationRows)
+        medicationFromRow(
+          row,
+          timesMinutes: [...?timesByMedication[row.id]]..sort(),
+          daysOfWeek: [...?daysByMedication[row.id]]..sort(),
+        ),
+    ];
+  }
+
+  Future<List<DoseEvent>> _loadEvents() async {
     final eventRows = await (_database.select(
       _database.doseEvents,
     )..orderBy([(row) => OrderingTerm.desc(row.occurredAtUtcMs)])).get();
-    final settingsRow = await _database.select(_database.settings).getSingle();
-    return Snapshot(
-      initialized: true,
-      medications: [
-        for (final row in medicationRows)
-          Medication(
-            id: row.id,
-            name: row.name,
-            dosage: row.dosage,
-            notes: row.notes,
-            shape: _pillShape(row.shape),
-            color: _pillColor(row.color),
-            timesMinutes: [
-              for (final time in timeRows)
-                if (time.medicationId == row.id) time.minutes,
-            ]..sort(),
-            daysOfWeek: [
-              for (final day in dayRows)
-                if (day.medicationId == row.id) day.weekday,
-            ]..sort(),
-            quantity: row.quantity,
-            refillThreshold: row.refillThreshold,
-          ),
-      ],
-      events: [
-        for (final row in eventRows)
-          DoseEvent(
-            id: row.id,
-            medicationId: row.medicationId,
-            medicationName: row.medicationName,
-            scheduledAt: _localDateTime(row.scheduledAtUtcMs),
-            at: _localDateTime(row.occurredAtUtcMs),
-            action: _doseAction(row.action),
-            snoozeUntil: switch (row.snoozeUntilUtcMs) {
-              final int milliseconds => _localDateTime(milliseconds),
-              null => null,
-            },
-          ),
-      ],
-      settings: AppSettings(
-        sound: settingsRow.sound,
-        vibration: settingsRow.vibration,
-        banners: settingsRow.banners,
-        snoozeMinutes: settingsRow.snoozeMinutes,
-      ),
+    return [for (final row in eventRows) doseEventFromRow(row)];
+  }
+
+  Future<AppSettings> _loadSettings() async {
+    return settingsFromRow(
+      await _database.select(_database.settings).getSingle(),
     );
+  }
+
+  Future<void> _retireCabinet(DateTime now) async {
+    await _database.delete(_database.doseEvents).go();
+    await _database
+        .update(_database.medications)
+        .write(
+          MedicationsCompanion(
+            isDeleted: const Value(true),
+            deletedAtUtcMs: Value(utcMs(now)),
+            updatedAtUtcMs: Value(utcMs(now)),
+          ),
+        );
   }
 
   Future<void> _replaceSnapshot(
@@ -326,39 +353,16 @@ final class VitaliaRepository {
       await _writeMedication(medication, importedAt);
     }
     for (final event in snapshot.events) {
-      await _database
-          .into(_database.doseEvents)
-          .insert(
-            DoseEventsCompanion.insert(
-              id: event.id,
-              medicationId: event.medicationId,
-              medicationName: event.medicationName,
-              scheduledAtUtcMs: _utcMs(event.scheduledAt),
-              occurredAtUtcMs: _utcMs(event.at),
-              action: event.action.name,
-              snoozeUntilUtcMs: Value(
-                event.snoozeUntil?.toUtc().millisecondsSinceEpoch,
-              ),
-            ),
-          );
+      await _insertEvent(event);
     }
-    await _database
-        .into(_database.settings)
-        .insertOnConflictUpdate(
-          SettingsCompanion.insert(
-            sound: snapshot.settings.sound,
-            vibration: snapshot.settings.vibration,
-            banners: snapshot.settings.banners,
-            snoozeMinutes: snapshot.settings.snoozeMinutes,
-          ),
-        );
+    await _writeSettings(snapshot.settings);
   }
 
   Future<void> _writeMedication(Medication medication, DateTime now) async {
     final existing = await (_database.select(
       _database.medications,
     )..where((row) => row.id.equals(medication.id))).getSingleOrNull();
-    final stamp = _utcMs(now);
+    final stamp = utcMs(now);
     await _database
         .into(_database.medications)
         .insertOnConflictUpdate(
@@ -405,6 +409,38 @@ final class VitaliaRepository {
     }
   }
 
+  Future<void> _insertEvent(DoseEvent event) {
+    return _database
+        .into(_database.doseEvents)
+        .insert(
+          DoseEventsCompanion.insert(
+            id: event.id,
+            medicationId: event.medicationId,
+            medicationName: event.medicationName,
+            scheduledAtUtcMs: utcMs(event.scheduledAt),
+            occurredAtUtcMs: utcMs(event.at),
+            action: event.action.name,
+            snoozeUntilUtcMs: Value(
+              event.snoozeUntil?.toUtc().millisecondsSinceEpoch,
+            ),
+          ),
+        );
+  }
+
+  Future<void> _writeSettings(AppSettings settings) {
+    return _database
+        .into(_database.settings)
+        .insertOnConflictUpdate(
+          SettingsCompanion.insert(
+            id: const Value(1),
+            sound: settings.sound,
+            vibration: settings.vibration,
+            banners: settings.banners,
+            snoozeMinutes: settings.snoozeMinutes,
+          ),
+        );
+  }
+
   Future<Result<Snapshot?, StorageFailure>> _readLegacySnapshot() async {
     try {
       final preferences = _legacyPreferences ??=
@@ -417,13 +453,18 @@ final class VitaliaRepository {
       }
       return Ok(decodeLegacySnapshot(decoded));
     } on FormatException catch (error, stack) {
-      _log('legacy.decode', error, stack);
+      logUnexpected('vitalia.storage', 'legacy.decode', error, stack);
       return const Err(StorageCorrupt());
     } on PlatformException catch (error, stack) {
-      _log('legacy.read.plugin', error, stack);
+      logUnexpected('vitalia.storage', 'legacy.read.plugin', error, stack);
       return const Err(StorageUnavailable());
     } on MissingPluginException catch (error, stack) {
-      _log('legacy.read.missing_plugin', error, stack);
+      logUnexpected(
+        'vitalia.storage',
+        'legacy.read.missing_plugin',
+        error,
+        stack,
+      );
       return const Err(StorageUnavailable());
     }
   }
@@ -435,7 +476,7 @@ final class VitaliaRepository {
       )..where((item) => item.key.equals(_initializedKey))).getSingleOrNull();
       return Ok(row != null);
     } on SqliteException catch (error, stack) {
-      _log('initialize.read', error, stack);
+      logUnexpected('vitalia.storage', 'initialize.read', error, stack);
       return const Err(StorageUnavailable());
     }
   }
@@ -447,10 +488,15 @@ final class VitaliaRepository {
       await preferences.remove(legacySnapshotKey);
       return const Ok(null);
     } on PlatformException catch (error, stack) {
-      _log('legacy.remove.plugin', error, stack);
+      logUnexpected('vitalia.storage', 'legacy.remove.plugin', error, stack);
       return const Err(StorageUnavailable());
     } on MissingPluginException catch (error, stack) {
-      _log('legacy.remove.missing_plugin', error, stack);
+      logUnexpected(
+        'vitalia.storage',
+        'legacy.remove.missing_plugin',
+        error,
+        stack,
+      );
       return const Err(StorageUnavailable());
     }
   }
@@ -463,43 +509,8 @@ final class VitaliaRepository {
       await action();
       return const Ok(null);
     } on SqliteException catch (error, stack) {
-      _log(operation, error, stack);
+      logUnexpected('vitalia.storage', operation, error, stack);
       return Err(StorageConstraintViolation(operation));
     }
-  }
-
-  static int _utcMs(DateTime value) => value.toUtc().millisecondsSinceEpoch;
-
-  static DateTime _localDateTime(int milliseconds) =>
-      DateTime.fromMillisecondsSinceEpoch(milliseconds, isUtc: true).toLocal();
-
-  static PillShape _pillShape(String name) {
-    for (final value in PillShape.values) {
-      if (value.name == name) return value;
-    }
-    throw const FormatException('Unknown medication shape');
-  }
-
-  static PillColor _pillColor(String name) {
-    for (final value in PillColor.values) {
-      if (value.name == name) return value;
-    }
-    throw const FormatException('Unknown medication color');
-  }
-
-  static DoseAction _doseAction(String name) {
-    for (final value in DoseAction.values) {
-      if (value.name == name) return value;
-    }
-    throw const FormatException('Unknown dose action');
-  }
-
-  static void _log(String operation, Object error, StackTrace stack) {
-    developer.log(
-      operation,
-      name: 'vitalia.storage',
-      error: error,
-      stackTrace: stack,
-    );
   }
 }

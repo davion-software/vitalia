@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'dart:developer' as developer;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:meta/meta.dart';
+import 'package:vitalia/core/app_log.dart';
 import 'package:vitalia/core/format.dart';
 import 'package:vitalia/core/medication.dart';
 import 'package:vitalia/core/result.dart';
@@ -40,14 +40,39 @@ final class MedicationsState {
   }
 }
 
+@immutable
+final class MedicationsFeedback {
+  const MedicationsFeedback({this.shouldPop = false, this.failure});
+
+  final bool shouldPop;
+  final StorageFailure? failure;
+}
+
+final class MedicationsFeedbackNotifier extends Notifier<MedicationsFeedback> {
+  @override
+  MedicationsFeedback build() => const MedicationsFeedback();
+
+  void pop() => state = const MedicationsFeedback(shouldPop: true);
+
+  void fail(StorageFailure failure) =>
+      state = MedicationsFeedback(failure: failure);
+
+  void clear() => state = const MedicationsFeedback();
+}
+
+final medicationsFeedbackProvider =
+    NotifierProvider<MedicationsFeedbackNotifier, MedicationsFeedback>(
+      MedicationsFeedbackNotifier.new,
+    );
+
 final class MedicationsNotifier extends Notifier<AsyncValue<MedicationsState>> {
   @override
   AsyncValue<MedicationsState> build() {
-    return ref.watch(vitaliaSnapshotProvider).whenData((result) {
+    return ref.watch(medicationsProvider).whenData((result) {
       return switch (result) {
         Ok(:final value) => MedicationsState(
           items: [
-            for (final medication in value.medications)
+            for (final medication in value)
               MedicationItemState(
                 medication: medication,
                 scheduleLabel:
@@ -71,47 +96,46 @@ final class MedicationsNotifier extends Notifier<AsyncValue<MedicationsState>> {
 
   String createId() => ref.read(idGeneratorProvider)();
 
-  void save(Medication medication, void Function() onSaved) {
-    unawaited(_save(medication, onSaved).catchError(_reportUnexpected));
+  void save(Medication medication) {
+    unawaited(
+      _save(medication).catchError(
+        unexpectedLogger('vitalia.medications', 'medications.intent'),
+      ),
+    );
   }
 
-  void delete(String id, void Function() onDeleted) {
-    unawaited(_delete(id, onDeleted).catchError(_reportUnexpected));
+  void delete(String id) {
+    unawaited(
+      _delete(id).catchError(
+        unexpectedLogger('vitalia.medications', 'medications.intent'),
+      ),
+    );
   }
 
-  Future<void> _save(Medication medication, void Function() onSaved) async {
+  Future<void> _save(Medication medication) async {
     final result = await ref
         .read(vitaliaRepositoryProvider)
         .upsertMedication(medication, ref.read(clockProvider).now());
     if (!ref.mounted) return;
-    switch (result) {
-      case Ok():
-        onSaved();
-      case Err(:final failure):
-        developer.log(failure.code, name: 'vitalia.medications');
-    }
+    _applyWrite(result);
   }
 
-  Future<void> _delete(String id, void Function() onDeleted) async {
+  Future<void> _delete(String id) async {
     final result = await ref
         .read(vitaliaRepositoryProvider)
         .softDeleteMedication(id, ref.read(clockProvider).now());
     if (!ref.mounted) return;
-    switch (result) {
-      case Ok():
-        onDeleted();
-      case Err(:final failure):
-        developer.log(failure.code, name: 'vitalia.medications');
-    }
+    _applyWrite(result);
   }
 
-  void _reportUnexpected(Object error, StackTrace stack) {
-    developer.log(
-      'medications.intent',
-      name: 'vitalia.medications',
-      error: error,
-      stackTrace: stack,
-    );
+  void _applyWrite(Result<void, StorageFailure> result) {
+    switch (result) {
+      case Ok():
+        ref.read(medicationsFeedbackProvider.notifier).pop();
+      case Err(:final failure):
+        logFailure('vitalia.medications', failure);
+        ref.read(medicationsFeedbackProvider.notifier).fail(failure);
+    }
   }
 }
 

@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'dart:developer' as developer;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:meta/meta.dart';
+import 'package:vitalia/core/app_log.dart';
 import 'package:vitalia/core/app_settings.dart';
 import 'package:vitalia/core/dose_event.dart';
 import 'package:vitalia/core/dose_slot.dart';
@@ -10,9 +10,10 @@ import 'package:vitalia/core/format.dart';
 import 'package:vitalia/core/medication.dart';
 import 'package:vitalia/core/result.dart';
 import 'package:vitalia/core/schedule.dart';
-import 'package:vitalia/core/snapshot.dart';
+import 'package:vitalia/core/storage_failure.dart';
 import 'package:vitalia/data/providers.dart';
 import 'package:vitalia/services/app_providers.dart';
+import 'package:vitalia/services/async_combine.dart';
 
 @immutable
 final class AlarmState {
@@ -20,11 +21,22 @@ final class AlarmState {
     required this.slot,
     required this.settings,
     required this.clockLabel,
+    this.actionFailure,
   });
 
   final DoseSlot slot;
   final AppSettings settings;
   final String clockLabel;
+  final StorageFailure? actionFailure;
+
+  AlarmState copyWith({StorageFailure? actionFailure}) {
+    return AlarmState(
+      slot: slot,
+      settings: settings,
+      clockLabel: clockLabel,
+      actionFailure: actionFailure,
+    );
+  }
 }
 
 final class AlarmNotifier extends Notifier<AsyncValue<AlarmState?>> {
@@ -36,12 +48,21 @@ final class AlarmNotifier extends Notifier<AsyncValue<AlarmState?>> {
     ref.watch(currentMinuteProvider);
     final now = ref.watch(clockProvider).now();
     final testAlarm = ref.watch(testAlarmProvider);
-    return ref.watch(vitaliaSnapshotProvider).whenData((result) {
-      return switch (result) {
-        Err() => _storageUnavailable(),
-        Ok(:final value) when testAlarm => _testAlarm(value, now),
-        Ok(:final value) => _scheduledAlarm(value, now),
-      };
+    return combineAsync3(
+      ref.watch(medicationsProvider),
+      ref.watch(doseEventsProvider),
+      ref.watch(settingsProvider),
+    ).whenData((results) {
+      return foldResults3(
+        first: results.$1,
+        second: results.$2,
+        third: results.$3,
+        onErr: (_) => _storageUnavailable(),
+        onOk: (medications, events, settings) {
+          if (testAlarm) return _testAlarm(medications, settings, now);
+          return _scheduledAlarm(medications, events, settings, now);
+        },
+      );
     });
   }
 
@@ -50,37 +71,45 @@ final class AlarmNotifier extends Notifier<AsyncValue<AlarmState?>> {
     return null;
   }
 
-  AlarmState _testAlarm(Snapshot snapshot, DateTime now) {
+  AlarmState _testAlarm(
+    List<Medication> medications,
+    AppSettings settings,
+    DateTime now,
+  ) {
     _cancelRefresh();
     return AlarmState(
       slot: DoseSlot(
-        medication: snapshot.medications.isEmpty
+        medication: medications.isEmpty
             ? const Medication.sample()
-            : snapshot.medications.first,
+            : medications.first,
         scheduledAt: now,
         status: SlotStatus.due,
         isTest: true,
       ),
-      settings: snapshot.settings,
+      settings: settings,
       clockLabel: formatClock(now),
     );
   }
 
-  AlarmState? _scheduledAlarm(Snapshot snapshot, DateTime now) {
-    _armRefresh(snapshot, now);
-    return _dueAlarm(
-      snapshot.settings,
-      snapshot.medications,
-      snapshot.events,
-      now,
-    );
+  AlarmState? _scheduledAlarm(
+    List<Medication> medications,
+    List<DoseEvent> events,
+    AppSettings settings,
+    DateTime now,
+  ) {
+    _armRefresh(medications, events, now);
+    return _dueAlarm(settings, medications, events, now);
   }
 
-  void _armRefresh(Snapshot snapshot, DateTime now) {
+  void _armRefresh(
+    List<Medication> medications,
+    List<DoseEvent> events,
+    DateTime now,
+  ) {
     _cancelRefresh();
     final next = nextAlarmChange(
-      medications: snapshot.medications,
-      events: snapshot.events,
+      medications: medications,
+      events: events,
       now: now,
     );
     _refreshTimer = Timer(next.difference(now), () {
@@ -96,18 +125,29 @@ final class AlarmNotifier extends Notifier<AsyncValue<AlarmState?>> {
   }
 
   void take(String slotId) {
-    unawaited(_record(slotId, DoseAction.taken).catchError(_reportUnexpected));
+    unawaited(
+      _record(
+        slotId,
+        DoseAction.taken,
+      ).catchError(unexpectedLogger('vitalia.alarm', 'alarm.intent')),
+    );
   }
 
   void skip(String slotId) {
     unawaited(
-      _record(slotId, DoseAction.skipped).catchError(_reportUnexpected),
+      _record(
+        slotId,
+        DoseAction.skipped,
+      ).catchError(unexpectedLogger('vitalia.alarm', 'alarm.intent')),
     );
   }
 
   void snooze(String slotId) {
     unawaited(
-      _record(slotId, DoseAction.snoozed).catchError(_reportUnexpected),
+      _record(
+        slotId,
+        DoseAction.snoozed,
+      ).catchError(unexpectedLogger('vitalia.alarm', 'alarm.intent')),
     );
   }
 
@@ -118,28 +158,22 @@ final class AlarmNotifier extends Notifier<AsyncValue<AlarmState?>> {
       ref.read(testAlarmProvider.notifier).stop();
       return;
     }
-    final now = ref.read(clockProvider).now();
-    final slot = alarm.slot;
-    final event = DoseEvent(
-      id: ref.read(idGeneratorProvider)(),
-      medicationId: slot.medication.id,
-      medicationName: slot.medication.name,
-      scheduledAt: slot.scheduledAt,
-      at: now,
-      action: action,
-      snoozeUntil: action == DoseAction.snoozed
-          ? now.add(Duration(minutes: alarm.settings.snoozeMinutes))
-          : null,
-    );
     final result = await ref
         .read(vitaliaRepositoryProvider)
-        .recordDose(event, decrementQuantity: action == DoseAction.taken);
+        .recordSlot(
+          slot: alarm.slot,
+          action: action,
+          now: ref.read(clockProvider).now(),
+          eventId: ref.read(idGeneratorProvider)(),
+          snoozeMinutes: alarm.settings.snoozeMinutes,
+        );
     if (!ref.mounted) return;
     switch (result) {
       case Ok():
         return;
       case Err(:final failure):
-        developer.log(failure.code, name: 'vitalia.alarm');
+        logFailure('vitalia.alarm', failure);
+        state = AsyncData(alarm.copyWith(actionFailure: failure));
     }
   }
 
@@ -163,15 +197,6 @@ final class AlarmNotifier extends Notifier<AsyncValue<AlarmState?>> {
       slot: due,
       settings: settings,
       clockLabel: formatClock(now),
-    );
-  }
-
-  void _reportUnexpected(Object error, StackTrace stack) {
-    developer.log(
-      'alarm.intent',
-      name: 'vitalia.alarm',
-      error: error,
-      stackTrace: stack,
     );
   }
 }

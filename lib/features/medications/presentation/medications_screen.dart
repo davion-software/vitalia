@@ -4,68 +4,91 @@ import 'package:go_router/go_router.dart';
 import 'package:vitalia/features/medications/presentation/medications_notifier.dart';
 import 'package:vitalia/routing/routes.dart';
 import 'package:vitalia/theme/palette.dart';
+import 'package:vitalia/theme/widgets/async_page.dart';
 import 'package:vitalia/theme/widgets/paper_card.dart';
 import 'package:vitalia/theme/widgets/pill_glyph.dart';
+import 'package:vitalia/theme/widgets/storage_banner.dart';
 
 final class MedicationsScreen extends ConsumerWidget {
   const MedicationsScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(medicationsNotifierProvider);
-    return state.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (error, stack) =>
-          const Center(child: Text('The cabinet is temporarily unavailable.')),
-      data: (value) => _MedicationList(items: value.items),
+    return AsyncPage(
+      value: ref.watch(medicationsNotifierProvider),
+      errorMessage: 'The cabinet is temporarily unavailable.',
+      builder: (value) => _MedicationList(state: value),
     );
   }
 }
 
 final class _MedicationList extends StatelessWidget {
-  const _MedicationList({required this.items});
+  const _MedicationList({required this.state});
 
-  final List<MedicationItemState> items;
+  final MedicationsState state;
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      padding: const EdgeInsetsDirectional.fromSTEB(24, 16, 24, 96),
-      children: [
-        Text('Cabinet', style: Theme.of(context).textTheme.headlineLarge),
-        const SizedBox(height: 6),
-        Text(
-          'What you take, when, and on which days.',
-          style: Theme.of(context).textTheme.bodyLarge
-              ?.copyWith(color: VitaliaPalette.inkSoft),
-        ),
-        const SizedBox(height: 24),
-        if (items.isEmpty)
-          Text(
-            'The cabinet is empty. Add a medication to start today\'s slots.',
-            style: Theme.of(context).textTheme.bodyLarge
-                ?.copyWith(color: VitaliaPalette.inkSoft),
-          )
-        else
-          ...items.map(
-            (item) => Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: _MedCard(item: item),
-            ),
+    final items = state.items;
+    final failure = state.failure;
+    return CustomScrollView(
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsetsDirectional.fromSTEB(24, 16, 24, 96),
+          sliver: SliverMainAxisGroup(
+            slivers: [
+              SliverList.list(
+                children: [
+                  Text(
+                    'Cabinet',
+                    style: Theme.of(context).textTheme.headlineLarge,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'What you take, when, and on which days.',
+                    style: Theme.of(context).textTheme.bodyLarge
+                        ?.copyWith(color: VitaliaPalette.inkSoft),
+                  ),
+                  const SizedBox(height: 24),
+                  if (failure != null) StorageBanner(failure: failure),
+                  if (items.isEmpty && failure == null)
+                    Text(
+                      "The cabinet is empty. Add a medication to start today's slots.",
+                      style: Theme.of(context).textTheme.bodyLarge
+                          ?.copyWith(color: VitaliaPalette.inkSoft),
+                    ),
+                ],
+              ),
+              SliverList.builder(
+                itemCount: items.length,
+                itemBuilder: (context, index) {
+                  final item = items[index];
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: _MedCard(
+                      key: ValueKey(item.medication.id),
+                      item: item,
+                    ),
+                  );
+                },
+              ),
+            ],
           ),
+        ),
       ],
     );
   }
 }
 
 final class _MedCard extends StatelessWidget {
-  const _MedCard({required this.item});
+  const _MedCard({required this.item, super.key});
 
   final MedicationItemState item;
 
   @override
   Widget build(BuildContext context) {
     final med = item.medication;
+    final quantityLabel = item.quantityLabel;
     return PaperCard(
       onTap: () => context.push(Routes.editMedication(med.id)),
       child: Row(
@@ -86,9 +109,9 @@ final class _MedCard extends StatelessWidget {
                   item.daysLabel,
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
-                if (item.quantityLabel != null)
+                if (quantityLabel != null)
                   Text(
-                    item.quantityLabel ?? '',
+                    quantityLabel,
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
                       color: med.needsRefill
                           ? VitaliaPalette.terracotta

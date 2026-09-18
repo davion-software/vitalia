@@ -80,7 +80,11 @@ void main() {
     overrides: [
       clockProvider.overrideWithValue(appClock),
       currentMinuteProvider.overrideWithValue(AsyncData(start)),
-      vitaliaSnapshotProvider.overrideWithValue(AsyncData(Ok(snapshot))),
+      medicationsProvider.overrideWithValue(
+        AsyncData(Ok(snapshot.medications)),
+      ),
+      doseEventsProvider.overrideWithValue(AsyncData(Ok(snapshot.events))),
+      settingsProvider.overrideWithValue(AsyncData(Ok(snapshot.settings))),
     ],
   );
   final subscription = container.listen(

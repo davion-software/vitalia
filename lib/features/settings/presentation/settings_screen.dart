@@ -1,22 +1,57 @@
 import 'dart:async';
-import 'dart:developer' as developer;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:vitalia/core/app_log.dart';
+import 'package:vitalia/core/copy.dart';
 import 'package:vitalia/features/settings/presentation/settings_notifier.dart';
 import 'package:vitalia/theme/palette.dart';
+import 'package:vitalia/theme/widgets/async_page.dart';
 import 'package:vitalia/theme/widgets/paper_card.dart';
+import 'package:vitalia/theme/widgets/storage_banner.dart';
 
 final class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final asyncState = ref.watch(settingsNotifierProvider);
-    final state = asyncState.value;
-    if (state == null) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    ref.listen(settingsFeedbackProvider, (previous, next) {
+      final messenger = ScaffoldMessenger.of(context);
+      final notice = next.notice;
+      if (notice != null && notice != previous?.notice) {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(switch (notice) {
+              SettingsNotice.demoRestored => 'Demo cabinet restored',
+              SettingsNotice.cleared => 'All data cleared',
+            }),
+          ),
+        );
+        ref.read(settingsFeedbackProvider.notifier).clear();
+      }
+      final failure = next.failure;
+      if (failure != null && failure != previous?.failure) {
+        messenger.showSnackBar(
+          SnackBar(content: Text(storageFailureMessage(failure))),
+        );
+        ref.read(settingsFeedbackProvider.notifier).clear();
+      }
+    });
+    return AsyncPage(
+      value: ref.watch(settingsNotifierProvider),
+      errorMessage: 'Settings are temporarily unavailable.',
+      builder: (state) => _SettingsContent(state: state),
+    );
+  }
+}
+
+final class _SettingsContent extends ConsumerWidget {
+  const _SettingsContent({required this.state});
+
+  final SettingsState state;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
     final settings = state.settings;
     final notifier = ref.read(settingsNotifierProvider.notifier);
     return ListView(
@@ -28,6 +63,10 @@ final class SettingsScreen extends ConsumerWidget {
           'Alarms ring while Vitalia is open. iOS and Android will not wake a killed app for these reminders. Keep the app nearby at dose times, or pair with a system alarm if you need a backup.',
           style: Theme.of(context).textTheme.bodyMedium,
         ),
+        if (state.failure case final failure?) ...[
+          const SizedBox(height: 16),
+          StorageBanner(failure: failure),
+        ],
         const SizedBox(height: 24),
         PaperCard(
           child: Column(
@@ -95,14 +134,7 @@ final class SettingsScreen extends ConsumerWidget {
         ),
         const SizedBox(height: 12),
         OutlinedButton(
-          onPressed: () {
-            final messenger = ScaffoldMessenger.of(context);
-            notifier.restoreDemo(() {
-              messenger.showSnackBar(
-                const SnackBar(content: Text('Demo cabinet restored')),
-              );
-            });
-          },
+          onPressed: notifier.restoreDemo,
           child: const Text('Restore demo cabinet'),
         ),
         const SizedBox(height: 12),
@@ -119,14 +151,9 @@ final class SettingsScreen extends ConsumerWidget {
 
   void _startConfirmClear(BuildContext context, WidgetRef ref) {
     unawaited(
-      _confirmClear(context, ref).catchError((Object error, StackTrace stack) {
-        developer.log(
-          'settings.confirm_clear',
-          name: 'vitalia.settings',
-          error: error,
-          stackTrace: stack,
-        );
-      }),
+      _confirmClear(context, ref).catchError(
+        unexpectedLogger('vitalia.settings', 'settings.confirm_clear'),
+      ),
     );
   }
 
@@ -156,6 +183,6 @@ final class SettingsScreen extends ConsumerWidget {
       },
     );
     if (ok != true || !context.mounted) return;
-    ref.read(settingsNotifierProvider.notifier).clearAll(() {});
+    ref.read(settingsNotifierProvider.notifier).clearAll();
   }
 }

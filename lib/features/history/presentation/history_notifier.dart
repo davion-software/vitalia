@@ -3,21 +3,23 @@ import 'package:meta/meta.dart';
 import 'package:vitalia/core/day_summary.dart';
 import 'package:vitalia/core/dose_event.dart';
 import 'package:vitalia/core/format.dart';
-import 'package:vitalia/core/result.dart';
+import 'package:vitalia/core/medication.dart';
 import 'package:vitalia/core/schedule.dart';
-import 'package:vitalia/core/snapshot.dart';
 import 'package:vitalia/core/storage_failure.dart';
 import 'package:vitalia/data/providers.dart';
 import 'package:vitalia/services/app_providers.dart';
+import 'package:vitalia/services/async_combine.dart';
 
 @immutable
 final class HistoryEventState {
   const HistoryEventState({
+    required this.id,
     required this.name,
     required this.detail,
     required this.action,
   });
 
+  final String id;
   final String name;
   final String detail;
   final DoseAction action;
@@ -34,21 +36,25 @@ final class HistoryState {
     this.failure,
   });
 
-  factory HistoryState.fromSnapshot(Snapshot snapshot, DateTime now) {
+  factory HistoryState.fromCabinet({
+    required List<Medication> medications,
+    required List<DoseEvent> events,
+    required DateTime now,
+  }) {
     final adherence = adherenceForRange(
-      medications: snapshot.medications,
-      events: snapshot.events,
+      medications: medications,
+      events: events,
       from: mondayOf(now),
       to: dateOnly(now),
       now: now,
     );
     final rate = adherence.rate;
     final streak = cleanStreak(
-      medications: snapshot.medications,
-      events: snapshot.events,
+      medications: medications,
+      events: events,
       now: now,
     );
-    final recent = [...snapshot.events]
+    final recent = [...events]
       ..sort((first, second) => second.at.compareTo(first.at));
     return HistoryState(
       percentLabel: rate == null ? '—' : '${(rate * 100).round()}%',
@@ -60,20 +66,28 @@ final class HistoryState {
         1 => '1 clean day',
         _ => '$streak clean days',
       },
-      days: lastSevenDays(
-        medications: snapshot.medications,
-        events: snapshot.events,
-        now: now,
-      ),
+      days: lastSevenDays(medications: medications, events: events, now: now),
       events: [
         for (final event in recent.take(30))
           HistoryEventState(
+            id: event.id,
             name: event.medicationName,
             detail:
                 '${actionLabel(event.action)} · ${formatRelativeEvent(event.at, now)}',
             action: event.action,
           ),
       ],
+    );
+  }
+
+  factory HistoryState.unavailable(StorageFailure failure) {
+    return HistoryState(
+      percentLabel: '—',
+      summaryLabel: 'History is unavailable.',
+      streakLabel: 'No streak yet',
+      days: const [],
+      events: const [],
+      failure: failure,
     );
   }
 
@@ -91,18 +105,20 @@ final class HistoryNotifier extends Notifier<AsyncValue<HistoryState>> {
     final now =
         ref.watch(currentMinuteProvider).value ??
         ref.watch(clockProvider).now();
-    return ref.watch(vitaliaSnapshotProvider).whenData((result) {
-      return switch (result) {
-        Ok(:final value) => HistoryState.fromSnapshot(value, now),
-        Err(:final failure) => HistoryState(
-          percentLabel: '—',
-          summaryLabel: 'History is unavailable.',
-          streakLabel: 'No streak yet',
-          days: const [],
-          events: const [],
-          failure: failure,
+    return combineAsync2(
+      ref.watch(medicationsProvider),
+      ref.watch(doseEventsProvider),
+    ).whenData((results) {
+      return foldResults2(
+        first: results.$1,
+        second: results.$2,
+        onErr: HistoryState.unavailable,
+        onOk: (medications, events) => HistoryState.fromCabinet(
+          medications: medications,
+          events: events,
+          now: now,
         ),
-      };
+      );
     });
   }
 }
