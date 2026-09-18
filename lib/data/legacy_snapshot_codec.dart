@@ -23,8 +23,14 @@ Snapshot decodeLegacySnapshot(Map<String, Object?> json) {
         name: _string(map, 'name'),
         dosage: _string(map, 'dosage'),
         notes: map['notes'] as String? ?? '',
-        shape: _pillShape(_string(map, 'shape')),
-        color: _pillColor(_string(map, 'color')),
+        shape: _require(
+          PillShape.byName(_string(map, 'shape')),
+          'Unknown pill shape',
+        ),
+        color: _require(
+          PillColor.byName(_string(map, 'color')),
+          'Unknown pill color',
+        ),
         timesMinutes: _integers(map['timesMinutes']),
         daysOfWeek: _integers(map['daysOfWeek']),
         quantity: (map['quantity'] as num?)?.toInt(),
@@ -40,7 +46,10 @@ Snapshot decodeLegacySnapshot(Map<String, Object?> json) {
         medicationName: _string(map, 'medicationName'),
         scheduledAt: DateTime.parse(_string(map, 'scheduledAt')),
         at: DateTime.parse(_string(map, 'at')),
-        action: _doseAction(_string(map, 'action')),
+        action: _require(
+          DoseAction.byName(_string(map, 'action')),
+          'Unknown dose action',
+        ),
         snoozeUntil: snoozeUntil is String ? DateTime.parse(snoozeUntil) : null,
       );
     }).toList(),
@@ -109,23 +118,7 @@ List<int> _integers(Object? value) {
   return value.whereType<num>().map((item) => item.toInt()).toList();
 }
 
-PillShape _pillShape(String name) {
-  for (final value in PillShape.values) {
-    if (value.name == name) return value;
-  }
-  throw const FormatException('Unknown pill shape');
-}
-
-PillColor _pillColor(String name) {
-  for (final value in PillColor.values) {
-    if (value.name == name) return value;
-  }
-  throw const FormatException('Unknown pill color');
-}
-
-DoseAction _doseAction(String name) {
-  for (final value in DoseAction.values) {
-    if (value.name == name) return value;
-  }
-  throw const FormatException('Unknown dose action');
+T _require<T>(T? value, String message) {
+  if (value == null) throw FormatException(message);
+  return value;
 }

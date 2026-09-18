@@ -1,4 +1,5 @@
 import 'package:drift/drift.dart';
+import 'package:vitalia/data/database_pragmas.dart';
 
 part 'app_database.g.dart';
 
@@ -167,10 +168,9 @@ final class AppDatabase extends _$AppDatabase {
       );
     },
     beforeOpen: (details) async {
-      await customStatement('PRAGMA journal_mode = WAL');
-      await customStatement('PRAGMA synchronous = FULL');
-      await customStatement('PRAGMA foreign_keys = ON');
-      await customStatement('PRAGMA busy_timeout = 5000');
+      for (final pragma in databaseSetupPragmas) {
+        await customStatement(pragma);
+      }
     },
   );
 }

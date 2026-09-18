@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
+import 'package:vitalia/data/database_pragmas.dart';
 
 Future<QueryExecutor> openDatabaseConnection() async {
   final directory = await getApplicationSupportDirectory();
@@ -11,11 +12,7 @@ Future<QueryExecutor> openDatabaseConnection() async {
   return NativeDatabase.createInBackground(
     file,
     setup: (database) {
-      database
-        ..execute('PRAGMA journal_mode = WAL')
-        ..execute('PRAGMA synchronous = FULL')
-        ..execute('PRAGMA foreign_keys = ON')
-        ..execute('PRAGMA busy_timeout = 5000');
+      databaseSetupPragmas.forEach(database.execute);
     },
   );
 }
