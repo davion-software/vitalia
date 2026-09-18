@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:clock/clock.dart';
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
@@ -21,6 +23,7 @@ Future<void> pumpAppFrames(WidgetTester tester) async {
 Future<void> pumpVitalia(
   WidgetTester tester, {
   DateTime? at,
+  Stream<DateTime>? timeStream,
   Size size = const Size(1200, 2400),
 }) async {
   tester.view
@@ -40,7 +43,10 @@ Future<void> pumpVitalia(
         vitaliaRepositoryProvider.overrideWithValue(repository),
         clockProvider.overrideWithValue(Clock.fixed(now)),
         idGeneratorProvider.overrideWithValue(() => 'widget-medication'),
-        currentTimeProvider.overrideWithValue(AsyncData(now)),
+        if (timeStream == null)
+          currentMinuteProvider.overrideWithValue(AsyncData(now))
+        else
+          currentMinuteProvider.overrideWith((ref) => timeStream),
       ],
       child: const VitaliaApp(),
     ),
@@ -58,6 +64,21 @@ void main() {
     expect(find.textContaining('Vitamin D3'), findsWidgets);
     expect(find.text('0/5'), findsOneWidget);
     expect(find.text('Refill soon'), findsOneWidget);
+  });
+
+  testWidgets('Today stays visible when the clock changes', (tester) async {
+    final now = DateTime(2026, 8, 26, 7);
+    final ticks = StreamController<DateTime>();
+    addTearDown(ticks.close);
+    await pumpVitalia(tester, at: now, timeStream: ticks.stream);
+    expect(find.text('Never miss a dose.'), findsOneWidget);
+
+    ticks.add(now.add(const Duration(minutes: 1)));
+    await tester.pump();
+
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('Never miss a dose.'), findsOneWidget);
+    expect(find.textContaining('Vitamin D3'), findsWidgets);
   });
 
   testWidgets('four state-preserving shell branches open', (tester) async {

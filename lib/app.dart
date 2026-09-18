@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vitalia/core/result.dart';
 import 'package:vitalia/data/providers.dart';
 import 'package:vitalia/features/alarm/presentation/alarm_overlay.dart';
+import 'package:vitalia/features/alarm/presentation/alarm_notifier.dart';
 import 'package:vitalia/routing/app_router.dart';
 import 'package:vitalia/services/app_providers.dart';
 import 'package:vitalia/theme/vitalia_theme.dart';
@@ -51,7 +52,8 @@ final class _VitaliaAppState extends ConsumerState<VitaliaApp>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     switch (state) {
       case AppLifecycleState.resumed:
-        ref.invalidate(currentTimeProvider);
+        ref.invalidate(currentMinuteProvider);
+        ref.invalidate(alarmNotifierProvider);
       case AppLifecycleState.inactive:
       case AppLifecycleState.paused:
         unawaited(_flush().catchError(_reportUnexpected));

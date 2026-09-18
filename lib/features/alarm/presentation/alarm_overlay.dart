@@ -17,32 +17,60 @@ final class AlarmOverlay extends ConsumerStatefulWidget {
 
 final class _AlarmOverlayState extends ConsumerState<AlarmOverlay> {
   Timer? _pulse;
+  String? _activeAlarmId;
+  late final ProviderSubscription<AsyncValue<AlarmState?>> _alarmSubscription;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _ping());
-    _pulse = Timer.periodic(const Duration(seconds: 2), (_) => _ping());
+    _alarmSubscription = ref.listenManual(
+      alarmNotifierProvider,
+      (previous, next) => _syncFeedback(next.value),
+      fireImmediately: true,
+    );
   }
 
   @override
   void dispose() {
-    _pulse?.cancel();
+    _alarmSubscription.close();
+    _stopFeedback();
     super.dispose();
   }
 
-  void _ping() {
-    if (!mounted) return;
-    final settings = ref.read(alarmNotifierProvider).value?.settings;
-    if (settings == null) return;
-    if (settings.sound) {
+  void _syncFeedback(AlarmState? alarm) {
+    final alarmId = alarm?.slot.id;
+    if (alarmId == _activeAlarmId) return;
+    _stopFeedback();
+    if (alarmId == null) return;
+    _activeAlarmId = alarmId;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _activeAlarmId != alarmId) return;
+      _pingAndSchedule(alarmId);
+    });
+  }
+
+  void _pingAndSchedule(String alarmId) {
+    if (!mounted || _activeAlarmId != alarmId) return;
+    final alarm = ref.read(alarmNotifierProvider).value;
+    if (alarm == null || alarm.slot.id != alarmId) {
+      _stopFeedback();
+      return;
+    }
+    if (alarm.settings.sound) {
       unawaited(
         SystemSound.play(SystemSoundType.alert).catchError(_reportUnexpected),
       );
     }
-    if (settings.vibration) {
+    if (alarm.settings.vibration) {
       unawaited(HapticFeedback.heavyImpact().catchError(_reportUnexpected));
     }
+    _pulse = Timer(const Duration(seconds: 2), () => _pingAndSchedule(alarmId));
+  }
+
+  void _stopFeedback() {
+    _pulse?.cancel();
+    _pulse = null;
+    _activeAlarmId = null;
   }
 
   @override

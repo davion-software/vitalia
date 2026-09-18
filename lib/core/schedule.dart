@@ -107,6 +107,44 @@ List<DoseSlot> slotsForDay({
   return slots;
 }
 
+DateTime nextAlarmChange({
+  required List<Medication> medications,
+  required List<DoseEvent> events,
+  required DateTime now,
+}) {
+  var next = DateTime(now.year, now.month, now.day + 1);
+
+  void consider(DateTime candidate) {
+    if (candidate.isAfter(now) && candidate.isBefore(next)) {
+      next = candidate;
+    }
+  }
+
+  for (var dayOffset = 0; dayOffset <= 7; dayOffset++) {
+    final day = DateTime(now.year, now.month, now.day + dayOffset);
+    for (final medication in medications) {
+      if (!runsOn(medication, day)) continue;
+      for (final minutes in medication.timesMinutes) {
+        final scheduledAt = combine(day, minutes);
+        final slotEvents = eventsForSlot(events, medication.id, scheduledAt);
+        final resolved = slotEvents.any(
+          (event) =>
+              event.action == DoseAction.taken ||
+              event.action == DoseAction.skipped,
+        );
+        if (resolved) continue;
+        consider(scheduledAt);
+        consider(scheduledAt.add(missAfter));
+        for (final event in slotEvents) {
+          final snoozeUntil = event.snoozeUntil;
+          if (snoozeUntil != null) consider(snoozeUntil);
+        }
+      }
+    }
+  }
+  return next;
+}
+
 Adherence adherenceForRange({
   required List<Medication> medications,
   required List<DoseEvent> events,

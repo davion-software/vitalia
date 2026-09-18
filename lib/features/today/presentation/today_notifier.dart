@@ -79,12 +79,13 @@ final class TodayState {
       done.where((slot) => slot.status == SlotStatus.taken).length;
 }
 
-final class TodayNotifier extends StreamNotifier<TodayState> {
+final class TodayNotifier extends Notifier<AsyncValue<TodayState>> {
   @override
-  Stream<TodayState> build() {
+  AsyncValue<TodayState> build() {
     final now =
-        ref.watch(currentTimeProvider).value ?? ref.watch(clockProvider).now();
-    return ref.watch(vitaliaRepositoryProvider).watchSnapshot().map((result) {
+        ref.watch(currentMinuteProvider).value ??
+        ref.watch(clockProvider).now();
+    return ref.watch(vitaliaSnapshotProvider).whenData((result) {
       return switch (result) {
         Ok(:final value) => TodayState.fromSnapshot(value, now),
         Err(:final failure) => TodayState(
@@ -150,6 +151,5 @@ final class TodayNotifier extends StreamNotifier<TodayState> {
   }
 }
 
-final todayNotifierProvider = StreamNotifierProvider<TodayNotifier, TodayState>(
-  TodayNotifier.new,
-);
+final todayNotifierProvider =
+    NotifierProvider<TodayNotifier, AsyncValue<TodayState>>(TodayNotifier.new);

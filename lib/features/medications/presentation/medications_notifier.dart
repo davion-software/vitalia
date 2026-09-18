@@ -40,10 +40,10 @@ final class MedicationsState {
   }
 }
 
-final class MedicationsNotifier extends StreamNotifier<MedicationsState> {
+final class MedicationsNotifier extends Notifier<AsyncValue<MedicationsState>> {
   @override
-  Stream<MedicationsState> build() {
-    return ref.watch(vitaliaRepositoryProvider).watchSnapshot().map((result) {
+  AsyncValue<MedicationsState> build() {
+    return ref.watch(vitaliaSnapshotProvider).whenData((result) {
       return switch (result) {
         Ok(:final value) => MedicationsState(
           items: [
@@ -116,6 +116,6 @@ final class MedicationsNotifier extends StreamNotifier<MedicationsState> {
 }
 
 final medicationsNotifierProvider =
-    StreamNotifierProvider<MedicationsNotifier, MedicationsState>(
+    NotifierProvider<MedicationsNotifier, AsyncValue<MedicationsState>>(
       MedicationsNotifier.new,
     );

@@ -17,10 +17,10 @@ final class SettingsState {
   final StorageFailure? failure;
 }
 
-final class SettingsNotifier extends StreamNotifier<SettingsState> {
+final class SettingsNotifier extends Notifier<AsyncValue<SettingsState>> {
   @override
-  Stream<SettingsState> build() {
-    return ref.watch(vitaliaRepositoryProvider).watchSnapshot().map((result) {
+  AsyncValue<SettingsState> build() {
+    return ref.watch(vitaliaSnapshotProvider).whenData((result) {
       return switch (result) {
         Ok(:final value) => SettingsState(settings: value.settings),
         Err(:final failure) => SettingsState(
@@ -112,6 +112,6 @@ final class SettingsNotifier extends StreamNotifier<SettingsState> {
 }
 
 final settingsNotifierProvider =
-    StreamNotifierProvider<SettingsNotifier, SettingsState>(
+    NotifierProvider<SettingsNotifier, AsyncValue<SettingsState>>(
       SettingsNotifier.new,
     );

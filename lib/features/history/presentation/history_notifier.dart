@@ -85,12 +85,13 @@ final class HistoryState {
   final StorageFailure? failure;
 }
 
-final class HistoryNotifier extends StreamNotifier<HistoryState> {
+final class HistoryNotifier extends Notifier<AsyncValue<HistoryState>> {
   @override
-  Stream<HistoryState> build() {
+  AsyncValue<HistoryState> build() {
     final now =
-        ref.watch(currentTimeProvider).value ?? ref.watch(clockProvider).now();
-    return ref.watch(vitaliaRepositoryProvider).watchSnapshot().map((result) {
+        ref.watch(currentMinuteProvider).value ??
+        ref.watch(clockProvider).now();
+    return ref.watch(vitaliaSnapshotProvider).whenData((result) {
       return switch (result) {
         Ok(:final value) => HistoryState.fromSnapshot(value, now),
         Err(:final failure) => HistoryState(
@@ -107,4 +108,6 @@ final class HistoryNotifier extends StreamNotifier<HistoryState> {
 }
 
 final historyNotifierProvider =
-    StreamNotifierProvider<HistoryNotifier, HistoryState>(HistoryNotifier.new);
+    NotifierProvider<HistoryNotifier, AsyncValue<HistoryState>>(
+      HistoryNotifier.new,
+    );

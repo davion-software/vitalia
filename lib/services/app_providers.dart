@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:clock/clock.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:vitalia/core/id_generator.dart';
@@ -11,14 +13,27 @@ final idGeneratorProvider = Provider<IdGenerator>(
       throw UnimplementedError('Override idGeneratorProvider in bootstrap'),
 );
 
-final currentTimeProvider = StreamProvider<DateTime>((ref) async* {
+final currentMinuteProvider = StreamProvider<DateTime>((ref) {
   final appClock = ref.watch(clockProvider);
-  yield appClock.now();
-  while (ref.mounted) {
-    await Future<void>.delayed(const Duration(seconds: 1));
-    if (!ref.mounted) return;
-    yield appClock.now();
-  }
+  return Stream<DateTime>.multi((controller) {
+    Timer? timer;
+
+    void emitAndSchedule() {
+      final now = appClock.now();
+      controller.add(now);
+      final nextMinute = DateTime(
+        now.year,
+        now.month,
+        now.day,
+        now.hour,
+        now.minute + 1,
+      );
+      timer = Timer(nextMinute.difference(now), emitAndSchedule);
+    }
+
+    controller.onCancel = () => timer?.cancel();
+    emitAndSchedule();
+  });
 });
 
 final class TestAlarmNotifier extends Notifier<bool> {

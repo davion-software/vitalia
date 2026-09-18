@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:clock/clock.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -15,7 +17,7 @@ import 'package:vitalia/services/app_providers.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('take intent publishes a taken slot from the database stream', () async {
+  test('take intent publishes a taken slot after it is persisted', () async {
     SharedPreferences.setMockInitialValues({});
     final now = DateTime(2026, 8, 26, 8, 5);
     final database = AppDatabase(NativeDatabase.memory());
@@ -28,40 +30,101 @@ void main() {
         vitaliaRepositoryProvider.overrideWithValue(repository),
         clockProvider.overrideWithValue(Clock.fixed(now)),
         idGeneratorProvider.overrideWithValue(() => 'notifier-event'),
-        currentTimeProvider.overrideWithValue(AsyncData(now)),
+        currentMinuteProvider.overrideWithValue(AsyncData(now)),
       ],
     );
     addTearDown(container.dispose);
-    final subscription = container.listen(
-      todayNotifierProvider,
-      (previous, next) {},
+
+    final initial = await _waitForToday(
+      container,
+      (state) => state.due.isNotEmpty,
     );
-    addTearDown(subscription.close);
-    final initial = await container.read(todayNotifierProvider.future);
     final slot = initial.due.first;
-    final persisted = repository.watchSnapshot().firstWhere(
-      (result) => switch (result) {
-        Ok(:final value) =>
-          value.events
-              .where((event) => event.id == 'notifier-event')
-              .isNotEmpty,
-        Err() => false,
-      },
-    );
-
-    container.read(todayNotifierProvider.notifier).take(slot.id);
-
-    await persisted.timeout(const Duration(seconds: 2));
-    container.invalidate(todayNotifierProvider);
-    final updated = await container.read(todayNotifierProvider.future);
-    expect(
-      updated.done
+    final updatedFuture = _waitForToday(
+      container,
+      (state) => state.done
           .where(
             (item) => item.id == slot.id && item.status == SlotStatus.taken,
           )
           .isNotEmpty,
-      isTrue,
     );
+
+    container.read(todayNotifierProvider.notifier).take(slot.id);
+
+    final updated = await updatedFuture;
     expect(updated.takenCount, 1);
   });
+
+  test('clock changes update Today without returning to loading', () async {
+    SharedPreferences.setMockInitialValues({});
+    final beforeDose = DateTime(2026, 8, 26, 7, 59, 59);
+    final ticks = StreamController<DateTime>();
+    addTearDown(ticks.close);
+    final database = AppDatabase(NativeDatabase.memory());
+    addTearDown(database.close);
+    final repository = VitaliaRepository(database);
+    expect(await repository.initialize(), isA<Ok<void, StorageFailure>>());
+    final container = ProviderContainer(
+      overrides: [
+        appDatabaseProvider.overrideWithValue(database),
+        vitaliaRepositoryProvider.overrideWithValue(repository),
+        clockProvider.overrideWithValue(Clock.fixed(beforeDose)),
+        idGeneratorProvider.overrideWithValue(() => 'notifier-event'),
+        currentMinuteProvider.overrideWith((ref) => ticks.stream),
+      ],
+    );
+    addTearDown(container.dispose);
+    final transitions = <AsyncValue<TodayState>>[];
+    final subscription = container.listen(
+      todayNotifierProvider,
+      (previous, next) => transitions.add(next),
+      fireImmediately: true,
+    );
+    addTearDown(subscription.close);
+
+    final initial = await _waitForToday(
+      container,
+      (state) =>
+          state.later.where((slot) => slot.scheduledAt.hour == 8).isNotEmpty,
+    );
+    final slotId = initial.later
+        .firstWhere((slot) => slot.scheduledAt.hour == 8)
+        .id;
+    transitions.clear();
+    final updatedFuture = _waitForToday(
+      container,
+      (state) => state.due.where((slot) => slot.id == slotId).isNotEmpty,
+    );
+
+    ticks.add(DateTime(2026, 8, 26, 8));
+
+    final updated = await updatedFuture;
+    expect(updated.due.where((slot) => slot.id == slotId), isNotEmpty);
+    expect(transitions, isNotEmpty);
+    expect(transitions.every((state) => !state.isLoading), isTrue);
+  });
+}
+
+Future<TodayState> _waitForToday(
+  ProviderContainer container,
+  bool Function(TodayState state) predicate,
+) async {
+  final current = container.read(todayNotifierProvider).value;
+  if (current != null && predicate(current)) return current;
+
+  final completer = Completer<TodayState>();
+  final subscription = container.listen(todayNotifierProvider, (
+    previous,
+    next,
+  ) {
+    final value = next.value;
+    if (!completer.isCompleted && value != null && predicate(value)) {
+      completer.complete(value);
+    }
+  });
+  try {
+    return await completer.future.timeout(const Duration(seconds: 2));
+  } finally {
+    subscription.close();
+  }
 }

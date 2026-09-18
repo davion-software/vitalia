@@ -84,4 +84,81 @@ void main() {
     expect(runsOn(weekendOnly, wednesday), isFalse);
     expect(runsOn(weekendOnly, DateTime(2026, 8, 29)), isTrue);
   });
+
+  test('the next alarm change is the next scheduled dose', () {
+    expect(
+      nextAlarmChange(
+        medications: medications,
+        events: const [],
+        now: DateTime(2026, 8, 26, 7, 30),
+      ),
+      DateTime(2026, 8, 26, 8),
+    );
+  });
+
+  test('a due alarm refreshes when the dose becomes missed', () {
+    expect(
+      nextAlarmChange(
+        medications: medications,
+        events: const [],
+        now: DateTime(2026, 8, 26, 8),
+      ),
+      DateTime(2026, 8, 26, 10),
+    );
+  });
+
+  test('a snoozed alarm refreshes at its exact expiration second', () {
+    final scheduledAt = DateTime(2026, 8, 26, 8);
+    final snoozeUntil = DateTime(2026, 8, 26, 8, 10, 37);
+    final event = DoseEvent(
+      id: 'snooze',
+      medicationId: vitaminD3Id,
+      medicationName: 'Vitamin D3',
+      scheduledAt: scheduledAt,
+      at: DateTime(2026, 8, 26, 8, 0, 37),
+      action: DoseAction.snoozed,
+      snoozeUntil: snoozeUntil,
+    );
+
+    expect(
+      nextAlarmChange(
+        medications: [medications.first],
+        events: [event],
+        now: DateTime(2026, 8, 26, 8, 5),
+      ),
+      snoozeUntil,
+    );
+  });
+
+  test('a resolved dose has no remaining alarm transition today', () {
+    final scheduledAt = DateTime(2026, 8, 26, 8);
+    final event = DoseEvent(
+      id: 'taken',
+      medicationId: vitaminD3Id,
+      medicationName: 'Vitamin D3',
+      scheduledAt: scheduledAt,
+      at: DateTime(2026, 8, 26, 8, 1),
+      action: DoseAction.taken,
+    );
+
+    expect(
+      nextAlarmChange(
+        medications: [medications.first],
+        events: [event],
+        now: DateTime(2026, 8, 26, 8, 5),
+      ),
+      DateTime(2026, 8, 27),
+    );
+  });
+
+  test('an empty schedule refreshes at the next local midnight', () {
+    expect(
+      nextAlarmChange(
+        medications: const [],
+        events: const [],
+        now: DateTime(2026, 8, 26, 23, 45),
+      ),
+      DateTime(2026, 8, 27),
+    );
+  });
 }

@@ -10,6 +10,7 @@ import 'package:vitalia/core/format.dart';
 import 'package:vitalia/core/medication.dart';
 import 'package:vitalia/core/result.dart';
 import 'package:vitalia/core/schedule.dart';
+import 'package:vitalia/core/snapshot.dart';
 import 'package:vitalia/data/providers.dart';
 import 'package:vitalia/services/app_providers.dart';
 
@@ -26,35 +27,72 @@ final class AlarmState {
   final String clockLabel;
 }
 
-final class AlarmNotifier extends StreamNotifier<AlarmState?> {
+final class AlarmNotifier extends Notifier<AsyncValue<AlarmState?>> {
+  Timer? _refreshTimer;
+
   @override
-  Stream<AlarmState?> build() {
-    final now =
-        ref.watch(currentTimeProvider).value ?? ref.watch(clockProvider).now();
+  AsyncValue<AlarmState?> build() {
+    ref.onDispose(_cancelRefresh);
+    ref.watch(currentMinuteProvider);
+    final now = ref.watch(clockProvider).now();
     final testAlarm = ref.watch(testAlarmProvider);
-    return ref.watch(vitaliaRepositoryProvider).watchSnapshot().map((result) {
+    return ref.watch(vitaliaSnapshotProvider).whenData((result) {
       return switch (result) {
-        Err() => null,
-        Ok(:final value) when testAlarm => AlarmState(
-          slot: DoseSlot(
-            medication: value.medications.isEmpty
-                ? const Medication.sample()
-                : value.medications.first,
-            scheduledAt: now,
-            status: SlotStatus.due,
-            isTest: true,
-          ),
-          settings: value.settings,
-          clockLabel: formatClock(now),
-        ),
-        Ok(:final value) => _dueAlarm(
-          value.settings,
-          value.medications,
-          value.events,
-          now,
-        ),
+        Err() => _storageUnavailable(),
+        Ok(:final value) when testAlarm => _testAlarm(value, now),
+        Ok(:final value) => _scheduledAlarm(value, now),
       };
     });
+  }
+
+  AlarmState? _storageUnavailable() {
+    _cancelRefresh();
+    return null;
+  }
+
+  AlarmState _testAlarm(Snapshot snapshot, DateTime now) {
+    _cancelRefresh();
+    return AlarmState(
+      slot: DoseSlot(
+        medication: snapshot.medications.isEmpty
+            ? const Medication.sample()
+            : snapshot.medications.first,
+        scheduledAt: now,
+        status: SlotStatus.due,
+        isTest: true,
+      ),
+      settings: snapshot.settings,
+      clockLabel: formatClock(now),
+    );
+  }
+
+  AlarmState? _scheduledAlarm(Snapshot snapshot, DateTime now) {
+    _armRefresh(snapshot, now);
+    return _dueAlarm(
+      snapshot.settings,
+      snapshot.medications,
+      snapshot.events,
+      now,
+    );
+  }
+
+  void _armRefresh(Snapshot snapshot, DateTime now) {
+    _cancelRefresh();
+    final next = nextAlarmChange(
+      medications: snapshot.medications,
+      events: snapshot.events,
+      now: now,
+    );
+    _refreshTimer = Timer(next.difference(now), () {
+      _refreshTimer = null;
+      if (!ref.mounted) return;
+      ref.invalidateSelf();
+    });
+  }
+
+  void _cancelRefresh() {
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
   }
 
   void take(String slotId) {
@@ -139,4 +177,4 @@ final class AlarmNotifier extends StreamNotifier<AlarmState?> {
 }
 
 final alarmNotifierProvider =
-    StreamNotifierProvider<AlarmNotifier, AlarmState?>(AlarmNotifier.new);
+    NotifierProvider<AlarmNotifier, AsyncValue<AlarmState?>>(AlarmNotifier.new);
