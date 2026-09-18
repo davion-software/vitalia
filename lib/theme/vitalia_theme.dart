@@ -78,7 +78,7 @@ ThemeData vitaliaTheme() {
     ),
   );
 
-  final scheme = const ColorScheme.light(
+  const scheme = ColorScheme.light(
     primary: sage,
     onPrimary: paper,
     secondary: sage,
@@ -215,7 +215,7 @@ ThemeData vitaliaTheme() {
       behavior: SnackBarBehavior.floating,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
     ),
-    timePickerTheme: TimePickerThemeData(
+    timePickerTheme: const TimePickerThemeData(
       backgroundColor: paper,
       dialHandColor: sage,
       hourMinuteTextColor: ink,

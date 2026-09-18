@@ -42,8 +42,8 @@ linter:
     cascade_invocations: false
     directives_ordering: false
     lines_longer_than_80_chars: false
-    prefer_const_constructors: false
-    prefer_const_declarations: false
+    prefer_const_constructors: true
+    prefer_const_declarations: true
     public_member_api_docs: false
     sort_constructors_first: false
     unnecessary_type_name_in_constructor: false
